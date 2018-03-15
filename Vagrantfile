@@ -3,9 +3,9 @@
 
 require 'fileutils'
 
-Vagrant.require_version ">= 1.6.0"
+Vagrant.require_version ">= 1.9.7"
 
-# Make sure the vagrant-ignition plugin is installed
+# 确认已安装 vagrant-ignition 插件
 required_plugins = %w(vagrant-ignition)
 
 plugins_to_install = required_plugins.select { |plugin| not Vagrant.has_plugin? plugin }
@@ -18,8 +18,8 @@ if not plugins_to_install.empty?
   end
 end
 
-CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "user-data")
-IGNITION_CONFIG_PATH = File.join(File.dirname(__FILE__), "config.ign")
+# CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "user-data")
+IGNITION_CONFIG_PATH = File.join(File.dirname(__FILE__), "./drive/config.ign")
 CONFIG = File.join(File.dirname(__FILE__), "config.rb")
 
 # Defaults for config options defined in CONFIG
@@ -34,43 +34,17 @@ $vb_cpuexecutioncap = 100
 $shared_folders = {}
 $forwarded_ports = {}
 
-# Attempt to apply the deprecated environment variable NUM_INSTANCES to
-# $num_instances while allowing config.rb to override it
-if ENV["NUM_INSTANCES"].to_i > 0 && ENV["NUM_INSTANCES"]
-  $num_instances = ENV["NUM_INSTANCES"].to_i
-end
-
+# apply config.rb to override variables
 if File.exist?(CONFIG)
   require CONFIG
 end
 
-# Use old vb_xxx config variables when set
-def vm_gui
-  $vb_gui.nil? ? $vm_gui : $vb_gui
-end
-
-def vm_memory
-  $vb_memory.nil? ? $vm_memory : $vb_memory
-end
-
-def vm_cpus
-  $vb_cpus.nil? ? $vm_cpus : $vb_cpus
-end
-
 Vagrant.configure("2") do |config|
-  # always use Vagrants insecure key
   config.ssh.insert_key = false
-  # forward ssh agent to easily ssh into the different machines
   config.ssh.forward_agent = true
 
   config.vm.box = "coreos-alpha"
   config.vm.box_url = "https://alpha.release.core-os.net/amd64-usr/current/coreos_production_vagrant_virtualbox.json"
-
-  ["vmware_fusion", "vmware_workstation"].each do |vmware|
-    config.vm.provider vmware do |v, override|
-      override.vm.box_url = "https://alpha.release.core-os.net/amd64-usr/current/coreos_production_vagrant_vmware_fusion.json"
-    end
-  end
 
   config.vm.provider :virtualbox do |v|
     # On VirtualBox, we don't have guest additions or a functional vboxsf
@@ -97,15 +71,6 @@ Vagrant.configure("2") do |config|
         serialFile = File.join(logdir, "%s-serial.txt" % vm_name)
         FileUtils.touch(serialFile)
 
-        ["vmware_fusion", "vmware_workstation"].each do |vmware|
-          config.vm.provider vmware do |v, override|
-            v.vmx["serial0.present"] = "TRUE"
-            v.vmx["serial0.fileType"] = "file"
-            v.vmx["serial0.fileName"] = serialFile
-            v.vmx["serial0.tryNoRxLoss"] = "FALSE"
-          end
-        end
-
         config.vm.provider :virtualbox do |vb, override|
           vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
           vb.customize ["modifyvm", :id, "--uartmode1", serialFile]
@@ -120,18 +85,10 @@ Vagrant.configure("2") do |config|
         config.vm.network "forwarded_port", guest: guest, host: host, auto_correct: true
       end
 
-      ["vmware_fusion", "vmware_workstation"].each do |vmware|
-        config.vm.provider vmware do |v|
-          v.gui = vm_gui
-          v.vmx['memsize'] = vm_memory
-          v.vmx['numvcpus'] = vm_cpus
-        end
-      end
-
       config.vm.provider :virtualbox do |vb|
-        vb.gui = vm_gui
-        vb.memory = vm_memory
-        vb.cpus = vm_cpus
+        vb.gui = $vm_gui
+        vb.memory = $vm_memory
+        vb.cpus = $vm_cpus
         vb.customize ["modifyvm", :id, "--cpuexecutioncap", "#{$vb_cpuexecutioncap}"]
         config.ignition.config_obj = vb
       end
@@ -151,18 +108,12 @@ Vagrant.configure("2") do |config|
         config.vm.synced_folder ENV['HOME'], ENV['HOME'], id: "home", :nfs => true, :mount_options => ['nolock,vers=3,udp']
       end
 
-      # This shouldn't be used for the virtualbox provider (it doesn't have any effect if it is though)
-      if File.exist?(CLOUD_CONFIG_PATH)
-        config.vm.provision :file, :source => "#{CLOUD_CONFIG_PATH}", :destination => "/tmp/vagrantfile-user-data"
-        config.vm.provision :shell, inline: "mkdir /var/lib/coreos-vagrant", :privileged => true
-        config.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
-      end
-
       config.vm.provider :virtualbox do |vb|
         config.ignition.hostname = vm_name
+        config.ignition.drive_root = "drive"
         config.ignition.drive_name = "config" + i.to_s
-        # when the ignition config doesn't exist, the plugin automatically generates a very basic Ignition with the ssh key
-        # and previously specified options (ip and hostname). Otherwise, it appends those to the provided config.ign below
+        # 如 ignition 配置文件不存在，自动生成基本配置（包括 ssh key，ip，hostname）
+        #    ignition 配置文件存在， 将基本配置追加到配置文件后面。
         if File.exist?(IGNITION_CONFIG_PATH)
           config.ignition.path = 'config.ign'
         end
